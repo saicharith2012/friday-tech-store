@@ -13,6 +13,7 @@ interface RouteDefinition {
 
 // Single source of truth for v1: routes are registered from this table and the
 // root endpoint lists it, so the listing cannot drift from what is served.
+
 const routes: RouteDefinition[] = [
   {
     method: "get",
@@ -23,7 +24,7 @@ const routes: RouteDefinition[] = [
   {
     method: "post",
     path: "/chat",
-    description: "Chat with the support agent (placeholder, not implemented)",
+    description: "Chat with the support agent",
     handler: chatHandler,
   },
 ];

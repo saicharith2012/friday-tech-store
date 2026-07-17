@@ -1,0 +1,92 @@
+{
+  "info": {
+    "_postman_id": "a07668e2-8b48-46c9-bc96-5ad4328328ea",
+    "name": "friday-tech-store",
+    "description": "Local Friday support API tests. Start the API with bun run dev --filter=api. Set demoApiToken locally to DEMO_API_TOKEN from apps/api/.env (not the DeepSeek API key). Requests use the desktop app/agent to reach localhost. The order test makes a real model API call.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "createdAt": "2026-11-17T12:44:38.000Z",
+    "updatedAt": "2026-11-17T12:44:38.000Z",
+    "lastUpdatedBy": "19177160",
+    "uid": "19177160-a07668e2-8b48-46c9-bc96-5ad4328328ea"
+  },
+  "item": [
+    {
+      "name": "Chat — order details",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test(\"Agent completed the request\", () => pm.expect(body.status).to.eql(\"completed\"));",
+              "pm.test(\"Reply is nonempty\", () => pm.expect(body.reply).to.be.a(\"string\").and.not.empty);",
+              "pm.test(\"Conversation ID is a UUID\", () => pm.expect(body.conversationId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i));",
+              "if (body.conversationId) pm.collectionVariables.set(\"conversationId\", body.conversationId);"
+            ]
+          }
+        }
+      ],
+      "id": "902d0032-ea61-4fcf-bc84-6f7f503842a0",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message\": \"What is the status of my order ORD-1001? Please check the order details.\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/chat",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "chat"
+          ]
+        },
+        "description": "Authenticated order lookup. Save conversationId for manual follow-up requests. Set demoApiToken locally before sending."
+      },
+      "response": [],
+      "createdAt": "2026-11-17T12:44:38.000Z",
+      "updatedAt": "2026-11-17T12:44:38.000Z",
+      "uid": "19177160-902d0032-ea61-4fcf-bc84-6f7f503842a0"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{demoApiToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001"
+    },
+    {
+      "key": "demoApiToken",
+      "value": ""
+    },
+    {
+      "key": "conversationId",
+      "value": ""
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import { V1_PREFIX, v1Endpoints, v1Router } from "./routes/v1";
 
 export const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: "16kb" }));
 
 // Root: describes the API and lists every available endpoint.
 app.get("/", (_req, res) => {
