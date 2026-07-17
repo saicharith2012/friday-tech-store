@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 import { z } from "zod";
 import { env } from "../../env";
+import { customerId } from "../../tools";
 import { chat, ChatError } from "../../agent";
 
 const schema = z.strictObject({
@@ -25,7 +26,7 @@ export const chatHandler: RequestHandler = async (req, res) => {
   }
 
   try {
-    res.json(await chat(parsed.data));
+    res.json(await chat(parsed.data, customerId));
   } catch (error) {
     res.status(error instanceof ChatError ? error.status : 500).json({
       error: error instanceof ChatError ? error.message : "Service unavailable",

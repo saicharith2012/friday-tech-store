@@ -1,9 +1,10 @@
 import { complete, type Message } from "./llm";
-import { customerId, executeTool, type Ticket } from "./tools";
+import { executeTool, type Ticket } from "./tools";
 
 interface PendingConfirmation {
   id: string;
   ticket: Ticket;
+  expiresAt: string;
 }
 
 interface Conversation {
@@ -11,7 +12,7 @@ interface Conversation {
   turns: Message[][];
   busy: boolean;
   pending?: PendingConfirmation;
-  tickets: Map<string, string>;
+  tickets: Map<string, { id: string; ticket: Ticket }>;
 }
 
 interface ChatInput {
@@ -20,7 +21,7 @@ interface ChatInput {
   confirmationId?: string;
 }
 
-type ChatStatus = "completed" | "confirmation_required" | "escalated";
+type ChatStatus = "completed" | "confirmation_required" | "needs_escalation";
 
 interface ChatResponse {
   conversationId: string;
@@ -29,9 +30,35 @@ interface ChatResponse {
   pendingConfirmation?: PendingConfirmation;
 }
 
+const MAX_CONTEXT_BYTES = 64 * 1024;
+const MAX_RESPONSE_BYTES = 8 * 1024;
+
+function serializedBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function contextMessages(session: Conversation, turn: Message[]): Message[] {
+  while (
+    serializedBytes([system, ...session.turns.flat(), ...turn]) >
+    MAX_CONTEXT_BYTES
+  ) {
+    if (!session.turns.length) {
+      throw new Error("Current turn exceeds context budget");
+    }
+
+    session.turns.shift();
+  }
+
+  return [system, ...session.turns.flat(), ...turn];
+}
+
 const sessions = new Map<string, Conversation>();
 
-function getConversation(id: string, existing: boolean): Conversation {
+function getConversation(
+  id: string,
+  existing: boolean,
+  owner: string,
+): Conversation {
   const session = sessions.get(id);
 
   if (existing && !session) {
@@ -39,13 +66,13 @@ function getConversation(id: string, existing: boolean): Conversation {
   }
 
   const conversation = session ?? {
-    owner: customerId,
+    owner,
     turns: [],
     busy: false,
-    tickets: new Map<string, string>(),
+    tickets: new Map<string, { id: string; ticket: Ticket }>(),
   };
 
-  if (conversation.owner !== customerId) {
+  if (conversation.owner !== owner) {
     throw new ChatError(404, "Conversation unavailable");
   }
 
@@ -62,18 +89,26 @@ function confirmTicket(session: Conversation, confirmationId: string): string {
   const existingTicket = session.tickets.get(confirmationId);
 
   if (existingTicket) {
-    return `Ticket ${existingTicket} was already created.`;
+    return `Ticket ${existingTicket.id} was already recorded in this demo. No human has been notified.`;
   }
 
   if (session.pending?.id !== confirmationId) {
     throw new ChatError(400, "Invalid confirmation");
   }
 
+  if (Date.parse(session.pending.expiresAt) <= Date.now()) {
+    session.pending = undefined;
+    throw new ChatError(400, "Confirmation expired; request a new proposal");
+  }
+
   const ticketId = `TICKET-${crypto.randomUUID()}`;
-  session.tickets.set(confirmationId, ticketId);
+  session.tickets.set(confirmationId, {
+    id: ticketId,
+    ticket: { ...session.pending.ticket },
+  });
   session.pending = undefined;
 
-  return `Support ticket ${ticketId} created.`;
+  return `Mock ticket ${ticketId} recorded in memory. No human has been notified.`;
 }
 
 const system: Message = {
@@ -93,10 +128,11 @@ export class ChatError extends Error {
 
 export async function chat(
   input: ChatInput,
+  owner: string,
   model = complete,
 ): Promise<ChatResponse> {
   const id = input.conversationId ?? crypto.randomUUID();
-  const session = getConversation(id, Boolean(input.conversationId));
+  const session = getConversation(id, Boolean(input.conversationId), owner);
   session.busy = true;
   const turn: Message[] = [{ role: "user", content: input.message }];
 
@@ -116,8 +152,14 @@ export async function chat(
       return answer(confirmTicket(session, input.confirmationId), "completed");
     }
 
+    let toolCallCount = 0;
+
     for (let iteration = 0; iteration < 5; iteration++) {
-      const response = await model([system, ...session.turns.flat(), ...turn]);
+      const response = await model(contextMessages(session, turn));
+
+      if (serializedBytes(response) > MAX_RESPONSE_BYTES) {
+        throw new Error("Model response exceeds size limit");
+      }
 
       if (!response.tool_calls?.length) {
         if (!response.content?.trim()) {
@@ -129,13 +171,15 @@ export async function chat(
 
       turn.push(response);
 
-      for (const [index, call] of response.tool_calls.entries()) {
+      for (const call of response.tool_calls) {
         let observation: unknown;
 
         try {
-          if (index >= 4 || call.type !== "function") {
+          if (toolCallCount >= 4 || call.type !== "function") {
             throw new Error("Tool limit or unsupported tool");
           }
+
+          toolCallCount++;
 
           const result = executeTool(
             call.function.name,
@@ -149,6 +193,7 @@ export async function chat(
             session.pending = {
               id: crypto.randomUUID(),
               ticket: ticketProposal.ticket,
+              expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
             };
           }
         } catch {
@@ -174,8 +219,8 @@ export async function chat(
     }
 
     return answer(
-      "I could not resolve this within the available steps. Please contact human support; no ticket has been created.",
-      "escalated",
+      "I could not resolve this within the available steps. Please contact human support; no human handoff has been recorded.",
+      "needs_escalation",
     );
   } catch (error) {
     if (error instanceof ChatError) {
@@ -183,12 +228,22 @@ export async function chat(
     }
 
     return answer(
-      "The support service is temporarily unavailable. Please contact human support; no ticket has been created.",
-      "escalated",
+      "The support service is temporarily unavailable. Please contact human support; no human handoff has been recorded.",
+      "needs_escalation",
     );
   } finally {
-    session.turns.push(turn);
+    if (serializedBytes([system, ...turn]) <= MAX_CONTEXT_BYTES) {
+      session.turns.push(turn);
+    }
+
     session.turns = session.turns.slice(-20);
+
+    while (
+      serializedBytes([system, ...session.turns.flat()]) > MAX_CONTEXT_BYTES
+    ) {
+      session.turns.shift();
+    }
+
     session.busy = false;
   }
 }
